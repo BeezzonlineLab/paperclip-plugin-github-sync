@@ -31,14 +31,14 @@ export function SettingsPage({ context }: PluginSettingsPageProps) {
   return (
     <div style={{ padding: 24, maxWidth: 600 }}>
       <h2 style={{ marginBottom: 16 }}>GitHub Sync Settings</h2>
-      <p style={{ marginBottom: 16, color: "#6b7280", fontSize: 14 }}>
+      <p style={{ marginBottom: 16, color: "var(--muted-text, #6b7280)", fontSize: 14 }}>
         Configuration is managed via the plugin instance config. Use the buttons below to test and trigger sync.
       </p>
       <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-        <button onClick={handleTestConnection} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #d1d5db", cursor: "pointer", backgroundColor: "#f9fafb" }}>
+        <button onClick={handleTestConnection} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid var(--secondary-border, #d1d5db)", cursor: "pointer", backgroundColor: "var(--secondary-bg, #f9fafb)", color: "var(--secondary-text, #374151)" }}>
           Test Connection
         </button>
-        <button onClick={handleForceSync} disabled={syncing} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid #d1d5db", cursor: syncing ? "not-allowed" : "pointer", backgroundColor: syncing ? "#e5e7eb" : "#f9fafb" }}>
+        <button onClick={handleForceSync} disabled={syncing} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid var(--secondary-border, #d1d5db)", cursor: syncing ? "not-allowed" : "pointer", backgroundColor: syncing ? "var(--secondary-bg-hover, #e5e7eb)" : "var(--secondary-bg, #f9fafb)", color: "var(--secondary-text, #374151)" }}>
           {syncing ? "Syncing..." : "Force Sync Now"}
         </button>
       </div>
