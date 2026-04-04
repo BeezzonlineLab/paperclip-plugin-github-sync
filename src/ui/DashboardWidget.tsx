@@ -41,7 +41,7 @@ export function DashboardWidget({ context }: PluginWidgetProps) {
         </div>
       )}
       {data.rateLimit && (
-        <div style={{ fontSize: 12, color: "#6b7280" }}>
+        <div style={{ fontSize: 12, color: "var(--muted-text, #6b7280)" }}>
           API: {data.rateLimit.remaining} calls remaining
         </div>
       )}
