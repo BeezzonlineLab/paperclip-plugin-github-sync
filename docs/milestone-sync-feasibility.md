@@ -13,12 +13,20 @@
 | En faire un **regroupement Paperclip natif** (tâche parente / enfants) ? | ✅ **Faisable** — `issues.create` accepte `parentId` (vérifié dans le SDK). Contrainte : lien figé à la création (pas de re-parent via `update`) |
 | Sync **sortant** (Paperclip → milestone GitHub) ? | ⚠️ **Partiel** — dépend de l'existence d'un concept source côté Paperclip |
 
-**Verdict :** deux options réalisables.
-1. **Affichage lecture seule** (métadonnées milestone dans l'onglet GitHub) — trivial.
-2. **Regroupement natif via tâche parente/enfants** (`parentId`) — **faisable et
-   confirmé dans le SDK**. C'est le bon mapping Paperclip pour un milestone. Seule
-   contrainte : le rattachement parent est fixé **à la création** de l'issue et ne peut
-   pas être modifié ensuite (voir §4, Stratégie B) — ce qui structure la stratégie de sync.
+**Verdict :** réalisable. **Approche retenue : Milestone → Goal Paperclip** (`ctx.goals`),
+plus propre car le milestone n'apparaît pas comme une fausse tâche. Faisable et confirmé
+dans le SDK, **à condition d'assumer** ces limitations (détail §4, Stratégie B-bis) :
+
+- Le lien **issue→goal est figé à la création** (`issues.update` n'accepte pas `goalId`)
+  → un changement de milestone sur GitHub ne se propage pas ; lien capté à l'import.
+- Les Goals sont **au niveau company**, pas repo/projet → désambiguïsation par le titre
+  + mapping en `state` ; et le plugin **ne peut pas** rattacher le goal au projet du repo.
+- **Nouvelles capabilities** `goals.read`/`create`/`update` à déclarer ; pas de `delete`
+  (milestone supprimé → goal `cancelled`) ; échéance/progression stockées en texte.
+
+Alternative si ces limites gênent : **tâche parente/enfants** (`parentId`), rattachée au
+projet du repo mais qui crée une issue « fantôme » et partage la même contrainte de
+lien-à-la-création (§4, Stratégie B).
 
 ---
 
@@ -117,14 +125,91 @@ C'est le cœur du problème : **à quoi mapper un milestone dans Paperclip ?**
   - L'issue parente « milestone » doit être **exclue** du flux sortant existant
     (`handleIssueUpdated`) pour ne pas déclencher labels de statut / création de PR.
 
-### Stratégie B-bis — Milestone → Goal Paperclip (alternative plus propre)
-- Le SDK expose aussi les **Goals** (`ctx.goals` : `create/get/update`), un conteneur
-  hiérarchique **au-dessus** des projets/issues. `issues.create` accepte `goalId`.
-- Avantage : le milestone n'apparaît **pas** comme une fausse « tâche » dans l'arbre ;
-  les goals sont eux-mêmes re-parentables (`goals.update` accepte `parentId`).
-- **Même contrainte** que la Stratégie B : `issues.update` n'expose **pas** `goalId` →
-  le rattachement issue→goal reste réglable **uniquement à la création**.
-- Nécessite la capability `goals.read` + `goals.create` (non déclarée aujourd'hui).
+### Stratégie B-bis — Milestone → Goal Paperclip (retenue : plus propre, mais limitations à assumer)
+
+Le SDK expose les **Goals** (`ctx.goals` : `list/get/create/update`), un conteneur
+hiérarchique. `issues.create` accepte `goalId`. Le milestone n'apparaît **pas** comme
+une fausse « tâche » dans l'arbre → conceptuellement plus propre que la Stratégie B.
+
+**Types réels (vérifiés) :**
+```
+Goal { id, companyId, title, description, level, status, parentId, ownerAgentId, createdAt, updatedAt }
+GoalLevel  = "company" | "team" | "agent" | "task"
+GoalStatus = "planned" | "active" | "achieved" | "cancelled"
+PluginGoalsClient = { list, get, create({...,parentId?}), update(patch incl. parentId) }   // PAS de delete
+ctx.issues.create({ ..., goalId? })   // goalId posé à la création
+```
+
+**Points favorables :**
+- `goal` est un `entityType` valide de `detailTab` → onglet « GitHub » possible **sur la
+  vue Goal elle-même** (les types UI autorisés : `project, issue, agent, goal, run, comment, …`).
+- Goals re-parentables entre eux (`goals.update` accepte `parentId`) → on pourrait
+  organiser les milestones en arborescence.
+- N'encombre pas l'arbre de tâches avec des nœuds « faux ».
+
+**Limitations (à assumer explicitement) :**
+
+1. **Lien issue→goal figé à la création — LA limitation majeure (non résolue).**
+   `issues.create` accepte `goalId`, mais **`issues.update` ne l'accepte PAS**. Donc,
+   exactement comme la Stratégie B :
+   - une issue importée **sans** milestone ne peut pas être rattachée à un goal après coup ;
+   - un **changement/retrait de milestone** sur GitHub ne peut pas être répercuté sur
+     l'issue Paperclip existante.
+   Les Goals **ne corrigent pas** ce point. Le lien est capté **à l'import uniquement**.
+
+2. **Goals = périmètre entreprise (company), pas repo/projet.**
+   `Goal` n'a **pas de `projectId`**. Un milestone appartient à UN repo ; deux repos
+   peuvent avoir « v1.0 ». Il faut désambiguïser dans le titre (`repo — v1.0`) et tenir
+   le mapping dans `ctx.state`. Risque de collision/confusion entre repos.
+
+3. **Impossible de rattacher le goal au projet du repo depuis le plugin.**
+   Le modèle `Project` porte bien `goalIds`/`goals`, mais le client plugin `projects`
+   est **lecture seule** (`list`/`get`). Le milestone-goal **flotte au niveau company**
+   et n'apparaît pas « sous » le projet du repo → le bénéfice visuel de regroupement est
+   plus faible qu'attendu.
+
+4. **Taxonomie `level` inadaptée.** Aucun niveau (`company/team/agent/task`) ne
+   correspond à « milestone » → choix arbitraire (bricolage sémantique).
+
+5. **Vocabulaire de statut divergent et lossy.** Milestone = `open`/`closed` ;
+   Goal = `planned|active|achieved|cancelled`. Le mapping est approximatif : `closed`
+   ne distingue pas « atteint » d'« abandonné ».
+
+6. **Pas de champ échéance ni de progression sur `Goal`.** `due_on` et les compteurs
+   `open_issues`/`closed_issues` de GitHub n'ont aucun champ natif → doivent aller en
+   texte libre dans `description` (non filtrable, non structuré).
+
+7. **Pas de suppression (`goals` sans `delete`).** Un milestone supprimé sur GitHub ne
+   peut qu'être passé en `status: "cancelled"` → accumulation de goals orphelins.
+
+8. **Nouvelles capabilities requises** : `goals.read`, `goals.create`, `goals.update`
+   (absentes du manifeste actuel) → l'admin doit les accorder (friction d'installation
+   supérieure à la Stratégie B, qui réutilise les `issues.*` déjà déclarées).
+
+9. **Risque de pollution d'une surface humaine.** Les Goals sont probablement une
+   surface OKR partagée/visible par les humains ; injecter un goal par milestone GitHub
+   peut noyer les vrais objectifs stratégiques sous des dizaines de « milestones ».
+
+10. **Owner unique.** `Goal.ownerAgentId` est un propriétaire unique ; un milestone n'a
+    pas d'owner → champ laissé vide (désalignement mineur).
+
+**Comparaison synthétique :**
+
+| Critère | B — Parent/enfant (issues) | B-bis — Goals |
+|---------|----------------------------|---------------|
+| Lien posé à la création uniquement (pas de re-parent) | ⚠️ Oui | ⚠️ Oui (identique) |
+| Rattaché au repo/projet | ✅ Oui (issue dans le projet) | ❌ Non (company-scoped) |
+| Pollue l'arbre de tâches | ⚠️ Oui (issue parente « fantôme ») | ✅ Non |
+| Pollue une surface humaine (OKR) | ✅ Non | ⚠️ Oui (liste des goals) |
+| Nouvelles capabilities | ✅ Aucune (`issues.*` déjà là) | ⚠️ `goals.*` à ajouter |
+| Onglet UI dédié | issue | ✅ goal (dédié possible) |
+| Échéance / progression natives | ❌ Non | ❌ Non |
+| Suppression propre | ❌ Non (pas de delete d'issue) | ❌ Non (pas de delete de goal) |
+
+**Décision retenue :** Goals (B-bis) pour la propreté conceptuelle, en **assumant**
+les limitations 1 à 3 comme les plus structurantes : lien figé à la création,
+périmètre company (désambiguïsation par le titre + mapping en état), et absence de
+rattachement natif au projet du repo.
 
 ### Note sur les labels
 - `issues.create/update` acceptent `labelIds`, et `issues.update` **peut** modifier les
@@ -165,16 +250,18 @@ C'est le cœur du problème : **à quoi mapper un milestone dans Paperclip ?**
 5. Étendre `issue-github-info` (data endpoint) et l'`IssueDetailTab` pour afficher
    milestone + échéance + progression. Ajouter un compteur au dashboard.
 
-**Phase 2 — Regroupement natif tâche parente/enfants (faisable, Stratégie B)**
-- Créer/retrouver une **issue parente milestone** avant de créer les enfants
-  (traiter les milestones avant les issues dans le cycle).
-- Créer les issues GitHub rattachées avec `parentId` = id de l'issue parente.
-- Exclure les issues parentes milestone du flux sortant (`handleIssueUpdated`).
-- **Assumer/documenter** l'impossibilité de re-parenter : le lien milestone est capté
-  à l'import ; les changements de milestone ultérieurs sur GitHub ne se propagent pas.
-- Adapter `processGitHubIssue` (aujourd'hui `create`-si-absent / `update`-si-présent) :
-  la branche `update` ne peut pas ajouter/changer le parent → seul le premier import
-  pose le lien.
+**Phase 2 — Regroupement via Goals (retenu, Stratégie B-bis)**
+- Déclarer les capabilities `goals.read`, `goals.create`, `goals.update` au manifeste.
+- Pour chaque milestone GitHub : `ctx.goals.create({ title: "<repo> — <milestone>",
+  description: <échéance + progression + lien>, status: mappé depuis open/closed })`,
+  ou retrouver le goal existant. Mapping `milestone:<repo>#<number>` → `<goalId>` en `state`.
+- Traiter les milestones **avant** les issues dans le cycle (le goal doit exister avant).
+- Créer les issues GitHub rattachées avec `goalId` = id du goal milestone.
+- **Assumer/documenter** : `issues.update` n'accepte pas `goalId` → seul le **premier
+  import** pose le lien ; un changement de milestone ultérieur ne se propage pas. La
+  branche `update` de `processGitHubIssue` ne peut pas (re)poser le goal.
+- Milestone supprimé → `goals.update(status: "cancelled")` (pas de delete).
+- Surfacer via un `detailTab` sur l'entité `goal` (échéance, progression, lien GitHub).
 
 **Phase 3 — Sortant (optionnel)**
 - Action UI « Assigner cette issue à un milestone GitHub » / « Créer un milestone ».
