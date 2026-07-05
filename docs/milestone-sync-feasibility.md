@@ -10,14 +10,15 @@
 |----------|---------|
 | Récupérer les milestones depuis GitHub ? | ✅ **Faisable** — l'API et l'infra du plugin sont prêtes |
 | Les afficher dans Paperclip (lecture seule) ? | ✅ **Faisable dès maintenant** via `plugin.state` + UI existante |
-| En faire une **entité Paperclip de premier ordre** (comme un projet/epic) ? | ⚠️ **Bloqué** — le SDK Paperclip n'expose ni entité « milestone », ni `projects.create`, ni champ de regroupement sur les issues |
+| En faire un **regroupement Paperclip natif** (tâche parente / enfants) ? | ✅ **Faisable** — `issues.create` accepte `parentId` (vérifié dans le SDK). Contrainte : lien figé à la création (pas de re-parent via `update`) |
 | Sync **sortant** (Paperclip → milestone GitHub) ? | ⚠️ **Partiel** — dépend de l'existence d'un concept source côté Paperclip |
 
-**Verdict :** une synchronisation **entrante en lecture seule** (métadonnées de
-milestone rattachées aux issues, affichées dans l'onglet GitHub) est réalisable
-immédiatement avec un effort faible. Une synchronisation **bidirectionnelle « vraie »**
-(le milestone devient un objet Paperclip manipulable) est aujourd'hui **limitée par
-le SDK Paperclip**, pas par GitHub.
+**Verdict :** deux options réalisables.
+1. **Affichage lecture seule** (métadonnées milestone dans l'onglet GitHub) — trivial.
+2. **Regroupement natif via tâche parente/enfants** (`parentId`) — **faisable et
+   confirmé dans le SDK**. C'est le bon mapping Paperclip pour un milestone. Seule
+   contrainte : le rattachement parent est fixé **à la création** de l'issue et ne peut
+   pas être modifié ensuite (voir §4, Stratégie B) — ce qui structure la stratégie de sync.
 
 ---
 
@@ -88,14 +89,48 @@ C'est le cœur du problème : **à quoi mapper un milestone dans Paperclip ?**
 - `projects.create` indisponible → les projets doivent être créés à la main de toute façon.
 - ❌ Non viable comme modèle principal sans redéfinir tout le mapping repo→projet.
 
-### Stratégie B — Milestone → métadonnée/regroupement d'issue
-- **Le mapping le plus naturel** : un milestone regroupe des issues, comme un projet
-  Paperclip regroupe des issues.
-- **Faisable UNIQUEMENT si** le modèle d'issue Paperclip expose un champ exploitable
-  (label, tag, champ personnalisé, parent). **À VÉRIFIER** contre les types réels de
-  `@paperclipai/plugin-sdk` (non installés dans ce repo — voir §7).
-- À défaut, on ne peut qu'**injecter le nom du milestone dans la `description`**
-  (texte libre) → lossy, non filtrable, fragile. ⚠️ Solution de repli médiocre.
+### Stratégie B — Milestone → tâche parente / issues enfants ✅ CONFIRMÉE FAISABLE
+- **Le mapping le plus naturel** : un milestone regroupe des issues, exactement comme
+  une **tâche parente Paperclip** regroupe des tâches enfants.
+- **Vérifié** contre les types réels du SDK (`@paperclipai/plugin-sdk` v2026.x) :
+  - `Issue` possède `parentId: string | null` et `ancestors[]` (hiérarchie native).
+  - `ctx.issues.create({ ..., parentId })` **accepte `parentId`** → on peut créer une
+    issue enfant sous une issue parente. ✅
+  - `ctx.issues.getSubtree(id)` permet de lire l'arbre (parent + descendants). ✅
+- **Modèle proposé :**
+  1. Chaque **milestone GitHub** → une **issue parente** Paperclip (dans le projet du
+     repo), non assignée à un agent, statut reflétant open/closed du milestone.
+  2. Chaque **issue GitHub rattachée au milestone** → issue **enfant** créée avec
+     `parentId` = l'id de l'issue parente milestone.
+  3. Mapping stocké dans `ctx.state` : `milestone:<repo>#<number>` → `<parentIssueId>`.
+
+- ⚠️ **CONTRAINTE FORTE (structurante) :** `parentId` n'est réglable **qu'à la création**
+  (`issues.create`). **`issues.update` n'expose PAS `parentId`** → il est **impossible
+  de re-parenter** une issue déjà importée via l'API du plugin. Conséquences :
+  - Il faut créer/retrouver l'issue parente milestone **avant** de créer ses enfants
+    (traiter les milestones avant les issues dans le cycle de sync).
+  - Une issue importée **sans** milestone, puis ajoutée à un milestone plus tard sur
+    GitHub, **ne pourra pas** être rattachée après coup. De même, un **changement de
+    milestone** sur GitHub ne peut pas être répercuté sur l'issue Paperclip existante
+    (pas de re-parent, pas de delete). → Le lien milestone est **capté au moment de
+    l'import**, pas mis à jour ensuite. À documenter comme limite fonctionnelle.
+  - L'issue parente « milestone » doit être **exclue** du flux sortant existant
+    (`handleIssueUpdated`) pour ne pas déclencher labels de statut / création de PR.
+
+### Stratégie B-bis — Milestone → Goal Paperclip (alternative plus propre)
+- Le SDK expose aussi les **Goals** (`ctx.goals` : `create/get/update`), un conteneur
+  hiérarchique **au-dessus** des projets/issues. `issues.create` accepte `goalId`.
+- Avantage : le milestone n'apparaît **pas** comme une fausse « tâche » dans l'arbre ;
+  les goals sont eux-mêmes re-parentables (`goals.update` accepte `parentId`).
+- **Même contrainte** que la Stratégie B : `issues.update` n'expose **pas** `goalId` →
+  le rattachement issue→goal reste réglable **uniquement à la création**.
+- Nécessite la capability `goals.read` + `goals.create` (non déclarée aujourd'hui).
+
+### Note sur les labels
+- `issues.create/update` acceptent `labelIds`, et `issues.update` **peut** modifier les
+  labels (donc modifiable après coup, contrairement au parent). **Mais** le SDK
+  n'expose **aucune API pour créer/lister des labels** (`IssueLabel`) → il faudrait des
+  labels pré-existants avec leurs IDs. Utile en complément, pas comme regroupement principal.
 
 ### Stratégie C — Métadonnées en lecture seule (état plugin + UI) ✅ RECOMMANDÉE en MVP
 - Stocker dans `ctx.state` :
@@ -130,11 +165,16 @@ C'est le cœur du problème : **à quoi mapper un milestone dans Paperclip ?**
 5. Étendre `issue-github-info` (data endpoint) et l'`IssueDetailTab` pour afficher
    milestone + échéance + progression. Ajouter un compteur au dashboard.
 
-**Phase 2 — Regroupement réel (bloqué tant que le SDK n'est pas confirmé/étendu)**
-- Vérifier si le modèle d'issue Paperclip accepte un champ de regroupement (§7).
-- Si oui : écrire l'appartenance au milestone sur l'issue pour filtre/tri natifs.
-- Si non : demander à l'équipe Paperclip core une capacité (`milestones.*` ou
-  `issues.labels` / champ custom). C'est une dépendance externe au plugin.
+**Phase 2 — Regroupement natif tâche parente/enfants (faisable, Stratégie B)**
+- Créer/retrouver une **issue parente milestone** avant de créer les enfants
+  (traiter les milestones avant les issues dans le cycle).
+- Créer les issues GitHub rattachées avec `parentId` = id de l'issue parente.
+- Exclure les issues parentes milestone du flux sortant (`handleIssueUpdated`).
+- **Assumer/documenter** l'impossibilité de re-parenter : le lien milestone est capté
+  à l'import ; les changements de milestone ultérieurs sur GitHub ne se propagent pas.
+- Adapter `processGitHubIssue` (aujourd'hui `create`-si-absent / `update`-si-présent) :
+  la branche `update` ne peut pas ajouter/changer le parent → seul le premier import
+  pose le lien.
 
 **Phase 3 — Sortant (optionnel)**
 - Action UI « Assigner cette issue à un milestone GitHub » / « Créer un milestone ».
@@ -142,14 +182,20 @@ C'est le cœur du problème : **à quoi mapper un milestone dans Paperclip ?**
 
 ---
 
-## 7. Inconnue à lever avant Phase 2
+## 7. Vérification SDK (levée)
 
-Les dépendances (`@paperclipai/plugin-sdk`, `@paperclipai/shared`) **ne sont pas
-installées** dans ce dépôt ; impossible d'inspecter les types réels d'`Issue`.
+Inconnue résolue en installant `@paperclipai/plugin-sdk` (v2026.x) et en lisant les
+types réels. Faits confirmés :
 
-**Action requise :** confirmer, contre les `.d.ts` du SDK, si `issues.create/update`
-accepte un champ de regroupement (labels/tags/parent/custom fields). Cette réponse
-détermine si la Stratégie B est possible sans évolution du SDK.
+- `Issue.parentId: string | null` + `Issue.ancestors[]` → hiérarchie parent/enfant native.
+- `ctx.issues.create({ ..., parentId?, goalId?, labelIds? })` → **le parent se pose à la création**.
+- `ctx.issues.update(...)` = `Partial<Pick<Issue, "title"|"description"|"status"|"priority"|
+  "assigneeAgentId"|"assigneeUserId"|"billingCode"|... >> & { blockedByIssueIds?, labelIds?, ... }`
+  → **PAS de `parentId` ni `goalId`** ⇒ **re-parentage impossible** après création.
+- `ctx.issues.getSubtree(id)` → lecture de l'arbre (réconciliation / UI).
+- `ctx.goals` (`create/get/update`) existe ; `goals.update` accepte `parentId` (goals
+  re-parentables) → alternative « conteneur » (Stratégie B-bis).
+- **Pas** de `ctx.projects.create`, **pas** d'API de création de labels.
 
 ---
 
