@@ -31,6 +31,12 @@ function extractAgentLabel(labels: Array<{ name: string }>, prefix: string): str
   return label.name.slice(prefix.length);
 }
 
+export function formatIssueTitle(format: string, issue: Pick<GitHubIssue, "number" | "title">): string {
+  return (format && format.length > 0 ? format : "{title}")
+    .replace(/\{number\}/g, String(issue.number))
+    .replace(/\{title\}/g, issue.title);
+}
+
 export async function processGitHubIssue(
   ctx: PluginContext,
   config: GitHubSyncConfig,
@@ -64,11 +70,12 @@ export async function processGitHubIssue(
     assigneeAgentId = null;
   }
 
+  const title = formatIssueTitle(config.titleFormat, issue);
   const existingId = await getIssueMapping(ctx, githubRef);
 
   if (existingId) {
     const patch: Record<string, unknown> = {
-      title: issue.title,
+      title,
       description: issue.body ?? undefined,
     };
     if (issue.state === "closed") patch.status = "cancelled";
@@ -82,7 +89,7 @@ export async function processGitHubIssue(
     const created = await ctx.issues.create({
       companyId: config.companyId,
       projectId,
-      title: issue.title,
+      title,
       description: issue.body ?? undefined,
       assigneeAgentId: assigneeAgentId ?? undefined,
     });

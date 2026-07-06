@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createTestHarness } from "@paperclipai/plugin-sdk/testing";
 import manifest from "../src/manifest.js";
-import { processGitHubIssue } from "../src/sync/inbound.js";
+import { processGitHubIssue, formatIssueTitle } from "../src/sync/inbound.js";
 import { getIssueMapping, setIssueMapping, setProjectIdForRepo } from "../src/sync/mapping.js";
 import type { GitHubIssue, GitHubSyncConfig } from "../src/github/types.js";
 
@@ -14,6 +14,7 @@ const TEST_CONFIG: GitHubSyncConfig = {
   pollIntervalMinutes: 5,
   syncLabelsPrefix: "agent:",
   webhookSecretRef: "wh-ref",
+  titleFormat: "{title}",
 };
 
 function makeGitHubIssue(overrides: Partial<GitHubIssue> = {}): GitHubIssue {
@@ -165,6 +166,34 @@ describe("inbound sync", () => {
     expect(harness.activity.length).toBe(activityCount);
   });
 
+  it("applies the configured titleFormat when creating an issue", async () => {
+    const harness = createTestHarness({
+      manifest,
+      capabilities: [...manifest.capabilities],
+    });
+    const ctx = harness.ctx;
+    const ghClient = makeMockClient();
+
+    harness.seed({
+      companies: [{ id: "company-1", name: "Test Co" } as any],
+      projects: [{ id: "project-1", name: "repo", companyId: "company-1" } as any],
+    });
+    await setProjectIdForRepo(ctx, "test-org/repo", "project-1");
+
+    const issue = makeGitHubIssue({ number: 42, title: "Fix login bug" });
+    await processGitHubIssue(
+      ctx,
+      { ...TEST_CONFIG, titleFormat: "#{number} {title}" },
+      ghClient,
+      "test-org/repo",
+      issue,
+    );
+
+    const paperclipId = await getIssueMapping(ctx, "test-org/repo#42");
+    const created = await ctx.issues.get(paperclipId!, "company-1");
+    expect(created?.title).toBe("#42 Fix login bug");
+  });
+
   it("posts comment when agent label not found", async () => {
     const harness = createTestHarness({
       manifest,
@@ -191,5 +220,29 @@ describe("inbound sync", () => {
       42,
       expect.stringContaining("nonexistent"),
     );
+  });
+});
+
+describe("formatIssueTitle", () => {
+  it("returns the raw title with the default format", () => {
+    expect(formatIssueTitle("{title}", { number: 42, title: "Fix login bug" })).toBe("Fix login bug");
+  });
+
+  it("interpolates {number} and {title}", () => {
+    expect(formatIssueTitle("#{number} {title}", { number: 42, title: "Fix login bug" })).toBe("#42 Fix login bug");
+  });
+
+  it("does not double-prefix on repeated formatting (idempotent from GitHub source)", () => {
+    const once = formatIssueTitle("#{number} {title}", { number: 42, title: "Fix login bug" });
+    const twice = formatIssueTitle("#{number} {title}", { number: 42, title: "Fix login bug" });
+    expect(once).toBe(twice);
+  });
+
+  it("falls back to {title} when format is empty", () => {
+    expect(formatIssueTitle("", { number: 42, title: "Fix login bug" })).toBe("Fix login bug");
+  });
+
+  it("supports multiple occurrences of a token", () => {
+    expect(formatIssueTitle("[{number}] {title} ({number})", { number: 7, title: "X" })).toBe("[7] X (7)");
   });
 });

@@ -79,6 +79,13 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Agent Label Prefix",
         default: DEFAULT_CONFIG.syncLabelsPrefix,
       },
+      titleFormat: {
+        type: "string",
+        title: "Issue Title Format",
+        description:
+          "Template for the Paperclip issue title. Tokens: {number} (GitHub issue number), {title} (GitHub issue title). Example: \"#{number} {title}\".",
+        default: DEFAULT_CONFIG.titleFormat,
+      },
       webhookSecretRef: {
         type: "string",
         title: "Webhook Secret Reference",

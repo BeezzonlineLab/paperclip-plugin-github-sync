@@ -7,6 +7,7 @@ export interface GitHubSyncConfig {
   pollIntervalMinutes: number;
   syncLabelsPrefix: string;
   webhookSecretRef: string;
+  titleFormat: string;
 }
 
 export interface GitHubInstallationToken {

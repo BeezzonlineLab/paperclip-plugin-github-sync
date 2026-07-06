@@ -21,6 +21,7 @@ function getConfig(raw: Record<string, unknown>): GitHubSyncConfig {
     pollIntervalMinutes: (raw.pollIntervalMinutes as number) ?? 5,
     syncLabelsPrefix: (raw.syncLabelsPrefix as string) ?? "agent:",
     webhookSecretRef: raw.webhookSecretRef as string,
+    titleFormat: (raw.titleFormat as string) ?? "{title}",
   };
 }
 

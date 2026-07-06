@@ -42,6 +42,7 @@ export const STATE_KEYS = {
 export const DEFAULT_CONFIG = {
   pollIntervalMinutes: 5,
   syncLabelsPrefix: "agent:",
+  titleFormat: "{title}",
 };
 
 export const SYNC_NONCE_PREFIX = "<!-- paperclip-sync:";
