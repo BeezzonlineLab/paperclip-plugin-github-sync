@@ -138,13 +138,13 @@ curl -X POST "http://localhost:3100/api/plugins/$PLUGIN_ID/actions/force-sync-no
 1. Create a GitHub label matching an agent's `urlKey`: `agent:django-specialist`
 2. Add the label to any issue
 3. The plugin syncs the issue to Paperclip and assigns it to the matching agent
-4. The agent's heartbeat picks up the task automatically
+4. Imported issues land in the **backlog** (including agent-labeled ones). Move an issue out of the backlog (e.g. to `todo`) to let the assigned agent's heartbeat pick it up.
 
 ### Status Flow
 
 | GitHub Event | Paperclip Status |
 |-------------|-----------------|
-| Issue opened | `todo` |
+| Issue opened | `backlog` |
 | Agent checks out issue | `in_progress` |
 | Agent completes work | `in_review` |
 | PR merged | `done` |

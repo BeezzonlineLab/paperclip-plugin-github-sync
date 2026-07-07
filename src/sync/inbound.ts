@@ -92,15 +92,16 @@ export async function processGitHubIssue(
       title,
       description: issue.body ?? undefined,
       assigneeAgentId: assigneeAgentId ?? undefined,
+      status: "backlog",
     });
 
     await setIssueMapping(ctx, githubRef, created.id);
 
-    if (created.status !== "todo") {
+    if (created.status !== "backlog") {
       try {
-        await ctx.issues.update(created.id, { status: "todo" }, config.companyId);
+        await ctx.issues.update(created.id, { status: "backlog" }, config.companyId);
       } catch {
-        ctx.logger.warn("Could not set initial status to todo", { issueId: created.id });
+        ctx.logger.warn("Could not set initial status to backlog", { issueId: created.id });
       }
     }
 
