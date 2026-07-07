@@ -99,6 +99,7 @@ curl -X POST "http://localhost:3100/api/plugins/$PLUGIN_ID/config" \
       "companyId": "<your-paperclip-company-id>",
       "pollIntervalMinutes": 5,
       "syncLabelsPrefix": "agent:",
+      "titleFormat": "{title}",
       "webhookSecretRef": "<WEBHOOK_SECRET_ID>"
     }
   }'
@@ -175,6 +176,7 @@ agent:ui-designer
 | `companyId` | Yes | - | Paperclip company ID to sync with |
 | `pollIntervalMinutes` | No | `5` | Polling interval (1-30 minutes) |
 | `syncLabelsPrefix` | No | `agent:` | Prefix for agent assignment labels |
+| `titleFormat` | No | `{title}` | Template for the Paperclip issue title. Tokens: `{number}` (GitHub issue number), `{title}` (GitHub issue title). E.g. `"#{number} {title}"` → `#42 Fix login bug` |
 | `webhookSecretRef` | Yes | - | Secret ID for webhook signature validation |
 
 ## Architecture
