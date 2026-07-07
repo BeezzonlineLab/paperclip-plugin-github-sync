@@ -84,6 +84,10 @@ describe("inbound sync", () => {
     const paperclipId = await getIssueMapping(ctx, "test-org/repo#42");
     expect(paperclipId).not.toBeNull();
 
+    // Imported issues land in the backlog by default (even when agent-labeled)
+    const created = await ctx.issues.get(paperclipId!, "company-1");
+    expect(created?.status).toBe("backlog");
+
     // Should have logged activity
     expect(harness.activity.length).toBeGreaterThan(0);
     expect(harness.activity[0].message).toContain("imported");
